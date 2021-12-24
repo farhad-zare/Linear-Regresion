@@ -1,0 +1,917 @@
+---
+
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE) 
+```
+
+
+
+```{r}
+library(MASS)
+library(tidyverse)
+library(kableExtra)
+library(latex2exp)
+library(gplots)
+library(pROC)
+library(GGally)
+library(knitr)
+
+```
+
+# 1) Linear regression fundamentals
+```{r}
+set.seed(1984)
+n <- 100
+x1 <- rnorm(n = n, mean = 10, sd = sqrt(10))
+x2 <- rnorm(n = n, mean = 5, sd = sqrt(5))
+y1 <- 1.6 + 0 * x1 - 2 * x2 + rnorm(n = n, mean = 0, sd = 3)
+simulatedata=data.frame(x1,x2,y1)
+```
+
+Although we simulated x1 and x2, assume that they are deterministic quantities.
+(a) Write the equation of a normal linear model which has x1 and x2 as predictors, in
+terms of βs, σs, and ε along with the distributional assumptions of$\epsilon$. What are the
+true parameter values of β0, β1, β2, and σ? Are the true parameter values fixed
+(non-random) or random quantities?
+
+$$y=\beta_0+\beta_1 x_1+\beta_2 x_2+\epsilon $$
+where $\epsilon \sim N(\mu,\sigma)$ and $\beta_0=1.6$, $\beta_1=0$, $\beta_1=-2$,$\mu=0, \ \sigma=3$.
+
+simulation of alternative versions
+```{r}
+y2 <- 1.6+0*x1-2*x2+ rcauchy(n = n, location = 0, scale = 3)
+y3 <- 1.6+0*x1-2*x2+ rnorm(n = n, mean = 0, sd = 1:n*3)
+```
+
+(b) Plot the density of y1,y2, and y3. What assumption of normal linear regression are we violating if we use y2 as the dependent variable? What assumption of normal linear regression are we violating if we use y3 as the dependent variable?
+
+```{r}
+par(mfrow=c(1,3))
+plot(density(y1))
+plot(density(y2))
+plot(density(y3))
+```
+
+In $y2$ Cauchy distribution is used with un known variance. In $y3$ has normal error with not fixed variance.  So in the both $y2$ and $y3$ will not made a normal model. 
+
+(c) Fit a linear regression model where y1 is the dependent variable and x1, and x2 are the predictors (in order). What are the coefficient estimates of $\beta_0$, $\beta_1$,$\beta_2$ and $\sigma$? What are the R2 and R2adj values of the fit? Write out the equation of the model with the estimated parameter values.
+
+```{r}
+fit.simple=lm(y1~x1+x2, data = simulatedata)
+S=summary(fit.simple)
+S
+```
+```{r}
+fit.simple$coef 
+S$sigma # sigma 
+```
+
+```{r}
+R2=S$r.squared
+R2
+R2ad=S$adj.r.squared
+R2ad
+S$sigma
+```
+
+
+$$y=\beta_0+\beta_1 x_1+\beta_2 x_2+\epsilon$$ where $\beta_0=-1.71237$, $\beta_1=0.20195$ and $\beta_2=-1.82409$ and $\epsilon \sim N(0,2.862193)$.
+
+(d) What is the p-value for the hypothesis test that $\beta_1$= 0? Do we reject the null hypothesis under the significance level of $\alpha$= 0.05? Write out the 95% confidence interval for all $\beta$ parameter estimates using the confint function.
+
+```{r}
+p_val=S$coefficients[2,4]
+p_val # since p_value is significant and less than .05 we reject the null hypothesis 
+confint(fit.simple)
+```
+(e) Use the linear model to give a prediction for an observation with the following co-variate values:x1 = 12; x2 = 7. State the prediction along with its 95% prediction interval.
+
+```{r}
+newData <- data.frame(x1=12, x2=7)
+modelPrediction <- predict(fit.simple, newData, interval = 'predict')
+modelPrediction
+```
+(f) In class we discussed that the distribution of our $\beta$ coefficient estimates was normal. Demonstrate this by running 25000 simulations where you treat y1 as the outcome of some experiment. For each iteration of the experiment you should store the estimates of $\beta_0$, $\beta_1$ and $\beta_2$. At the end of the simulation, plot the densities of $\beta_i$,i= 1,2,3. Add a red, broken vertical line to each density plot which corresponds to the true parameter value. Discuss what you see on the density plots.[Hint: recompute y1 at the beginning of each iteration.]
+
+```{r}
+L <- 25000 # number of simulations
+df <- data.frame(iteration = 1:L, beta0 = 0, beta1 = 0, beta2=0 ,sigma =0)
+# We will use the x vector we created at the beginning of this document but we'll 
+# recalculate y for each experiment with a new draw from the error distribution
+for (i in 1:L) {
+  ySim <- 1.6 + 0 * x1 - 2 * x2 + rnorm(n = n, mean = 0, sd = 3)
+  # Fit model and store result in data frame
+  l1 <- lm(ySim ~ x1+x2)
+  df$beta0[i] <- coef(l1)[1]
+  df$beta1[i] <- coef(l1)[2]
+  df$beta2[i]<-coef(l1)[3]
+  df$sigma[i] <- summary(l1)$sigma
+}
+```
+
+```{r}
+df %>%
+  gather(var, val, -iteration) %>%
+  ggplot(aes(x = val)) +
+  geom_density() +
+  facet_wrap(~var, scales = 'free') +
+  geom_vline(data = tibble(val = apply(df[, 2:4], 2, mean), 
+                           var = colnames(df[, 2:4])), 
+             aes(xintercept = val), lty = 2, col = 'red')
+
+
+```
+
+We can see that coefficients and sigma are normally distributed and they have mean which we expected.
+
+
+# 2) Multiple linear regression
+
+(a) Begin by loading the data into R. Recast the season variable as a factor variable and rename the levels such that 1 = spring; 2 = summer; 3 = fall; 4 = winter. Make sure that spring is the baseline level of the new factor variable.
+
+```{r}
+bikesharing<-read.csv('bikesharing.csv', sep=';')
+bikesharing$season=factor(bikesharing$season, labels = c('spring','summer','fall','winter'))
+is.factor(bikesharing$season)
+```
+
+
+(b) Perform an exploratory analysis on variables registered, season, temp, hum,wind speed. For the numerical variables, create a table which has the min, max,median, 2.5% quantile, 97.5% quantile, mean, and standard deviation. Determine the correlation matrix between the continuous variables and plot it using a heatmap.Discuss the table and the heatmap.
+
+```{r}
+stats=bikesharing[,c('registered', 'temp', 'hum','windspeed')]
+number.na <- apply(stats, 2, function(x) sum(is.na(x)))
+means <- round(apply(stats, 2, mean),3)
+stds <- round(apply(stats, 2, sd),3)
+quantiles <- round(apply(stats, 2, quantile),3)
+
+table.data.1 <- as.data.frame(t(as.matrix(as.data.frame(rbind(number.na, means, stds, quantiles)))))
+colnames(table.data.1) <- c('NA values','Mean', 'Std','Minimum', '25% quantile', 'Median', '75% quantile', 'Maximum')
+table.data.1 %>%
+  kbl() %>%
+  kable_styling(full_width = F)
+
+drop=c(1,4)
+heatmap.2(cor(bikesharing[,-drop]))
+```
+
+(c) For the categorical variable season, plot box-plots with season on the x-axis and registered on the y-axis. Describe what you see on the box-plots.
+
+```{r}
+ggplot(bikesharing, aes(x=season, y=registered)) + 
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("season")
+```
+
+As we expect we can see when the weather becomes warmer people like to use bike more than cold season. In sprint and summer there is an increasing in the median  of registration however we have opposite trend in fall and winter.
+
+
+(d) Fit a linear regression model where the dependent variable is registered and the independent variable is season. Display the summary and interpret the coefficients. Look at the F-statistic; can we reject the ANOVA null hypothesis?
+
+```{r}
+fitseas=lm(registered~season, data = bikesharing)
+S1=summary(fitseas)
+S1
+S1$fstatistic
+anova(fitseas)
+```
+```{r}
+summary(aov(fitseas))
+```
+
+
+As p_value is <2e-16 we can reject the null hypothesis. 
+
+
+(e) Use Tukey’s test (TukeyHSD()) to compare the number of registered bikers between every season to each other. Report which differences are significant ($\alpha$= 0.05) and interpret the results.
+
+```{r}
+TukeyHSD(aov(fitseas))
+
+TukeyHSD(aov(fitseas))$season %>%
+  as_tibble(rownames = 'Comparison') %>%
+  rename(p.adj = 5) %>%
+  filter(p.adj < 0.05) %>%
+  kbl(align = 'c') %>%
+  kable_styling()
+```
+
+We see that the p-value for each comparison is less than 0.05 and thus there exists a significant difference between every group. The first line states that the difference between the summer and spring is 919.6359, with a 95% confidence interval of 552.1499 and 1287.1219; the difference is significant. similarly for other lines. 
+
+```{r}
+plot(TukeyHSD(aov(fitseas)))
+```
+
+
+Each pair there is significant different except maybe fall-summer. 
+
+(f) Extend the linear model from item (d) by adding variables temp, hum, windspeed. State the parameter estimates along with the estimate for $\sigma$. State the R2value. Write out the equation of the model with the estimated parameter values.
+
+```{r}
+fit2=lm(registered~season+temp+hum+windspeed, data = bikesharing)
+Sfit2=summary(fit2)
+Sfit2
+Sfit2$sigma
+Sfit2$r.squared
+```
+ 
+ The following dummy variables $d_i$ respect to season (to avoid writing 4 equation)
+ then $$ \hat{y}=\beta_0+\beta_1 d_{summer}+ \beta_2 d_{fall}+\beta_3 d_{winter}+\beta_4 x_1+\beta_5 x_2+\beta_6 x_3$$
+ 
+ 
+(g) Store the R2adj, number of predictors, AIC, and RMSE of the model from item (d)and item (f) in a table. Compare the two models by discussing the table.
+
+```{r}
+models <- c(1,2)
+R.adj <- rep(0,2)
+aic <- rep(0,2)
+RMSE<- rep(0,2)
+Nub.Predictors=rep(0,2)
+R.adj[1]=S1$adj.r.squared
+R.adj[2]=Sfit2$adj.r.squared
+Nub.Predictors[1]=length(fitseas$coefficients)
+Nub.Predictors[2]=length(fit2$coefficients)
+aic[1]=AIC(fitseas)
+aic[2]=AIC(fit2)
+RMSE[1]=sqrt(mean((bikesharing$registered - predict(fitseas))^2))
+RMSE[2]=sqrt(mean((bikesharing$registered - predict(fit2))^2))
+table.data.3 <- as.data.frame(cbind(models,Nub.Predictors ,R.adj, aic, RMSE))
+colnames(table.data.3) <- c('Model','Number.Predictors' , '$R_{\\text{adj}}^2$', 'AIC', '$\\text{RMSE}$')
+
+table.data.3 %>%
+  kbl() %>%
+  kable_styling(full_width = F)
+```
+
+Model in f has lower AIC. 
+
+
+(h) Check for high-leverage points, outliers and influential points for the model from item (f). Display and discuss the main diagnostics plots for high-leverage points, outliers and influential points. Perform a statistics test for potential outliers and discuss the results.
+
+```{r}
+fort.2 <- fortify(fit2)
+fort.2$jackknife <- rstudent(fit2)
+fort.2$rn <- row.names(fort.2)
+```
+
+```{r}
+n <- nrow(fort.2)
+p <- ncol(model.matrix(fit2))
+fort.2$obsN <- row.names(fort.2)
+fort.2$index <- 1:nrow(fort.2)
+fort.2 %>%
+  ggplot(aes(x = index, y = .hat)) +
+  geom_point() +
+  geom_hline(yintercept = 2*p/n, lty = 2, col = 'red') +
+  geom_text(aes(label = ifelse(.hat > 2*p/n, obsN, '')), hjust = -0.5)
+
+```
+We see that observation 50 , 69 has the highest leverage but there are other potential high leverage points such as observation 302, 45, and, 65, some more. see the following table:
+
+```{r}
+fort.2 %>%
+  filter(.hat > 2*p/n) %>%
+  arrange(desc(.hat)) %>%
+  select(obsN, .hat) %>%
+  kbl(align = 'c') %>%
+  kable_styling()
+```
+
+
+```{r}
+fort.2 %>%
+  dplyr::select(.stdresid, jackknife, rn) %>%
+  gather(residual, value, -rn) %>%
+  mutate(residual = factor(residual, 
+                           levels = c('.stdresid', 'jackknife'))) %>%
+  ggplot(aes(x = rn, y = value)) + 
+  geom_point(size = 1) +
+  geom_hline(yintercept = 0, lty = 2, col = 'red') +
+   geom_hline(yintercept = 2.5, lty = 2, col = 'green') +
+  geom_hline(yintercept = -2.5, lty = 2, col = 'green') +
+  geom_hline(yintercept = 3, lty = 2, col = 'red') +
+  geom_hline(yintercept = -3, lty = 2, col = 'red') +
+  geom_text(aes(label = ifelse(abs(value) > 3, rn, '')), vjust = -0.5) +
+  xlab("Index") +
+  ylab("Residuals") +
+  ggtitle("Index plot of standardized and jackknife residuals") +
+  theme(plot.title = element_text(hjust = 0.5, size = 15)) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) + 
+  facet_wrap(~residual, scales = 'free')
+```
+From the studentized and jackknife residual points we see that there are observations exceed the (heuristic) threshold of 2. Let’s confirm our graphical exploration by comparing our jackknife residual to the theoretical t value we obtain after Bonferroni corrections.
+
+
+
+```{r}
+p = length(coef(fit2))
+n = length(fitted(fit2))
+fort.2$obsN <- row.names(fort.2)
+alpha <- 0.05
+theoreticalT <- qt(p = 1 - alpha/(2 * n), n - p - 1)
+theoreticalNoBon <- qt(p = 1 - alpha/2, n - p - 1)
+tab <- tibble(jackknife = abs(fort.2$jackknife[abs(fort.2$jackknife) > 3]),
+       theoreticalT  = theoreticalT ,
+       OutlierBon = jackknife > theoreticalT ,
+       theoreticalNoBon = theoreticalNoBon,
+       OutlierNoBon = jackknife > theoreticalNoBon)  %>%
+  kbl(align = 'c') %>%
+  kable_styling(full_width = F)
+tab
+```
+```{r}
+fort.2 %>%
+  ggplot(aes(x = index, y = .cooksd)) +
+  geom_point() +
+  geom_hline(yintercept = 0.05, lty = 2) +
+  geom_text(aes(label = ifelse(.cooksd > 0.05, obsN, '')), hjust = -0.5)
+```
+```{r}
+suspicious <- c(50,69,302,239,45,65, 293,62,668,694,627)
+fort.2 %>%
+  filter(obsN %in% suspicious) %>%
+  mutate(highLeverage = .hat > 2*p/n,
+         outlier = abs(jackknife) > theoreticalT,
+         influential = .cooksd > 0.05) %>%
+  select(obsN, highLeverage, outlier, influential) %>%
+  mutate(totalMarks = highLeverage + outlier + influential) %>%
+  kbl(align = 'c') %>%
+  kable_styling()
+```
+
+
+```{r}
+
+indexes <- c(50,69,302,239,45,65, 293,62,668,694,627)
+r.adj <- rep(0,11)
+for(i in 1:11){
+bikesharing.update <- bikesharing[-indexes[i],]
+fit2.update<-lm(registered~season+temp+hum+windspeed, data = bikesharing.update )
+r.adj[i] = summary(fit2.update)$adj.r.squared
+}
+
+table.data.2 <- as.data.frame(cbind(indexes, r.adj))
+colnames(table.data.2) <- c('Index', '$R_{\\text{adj}}^2$')
+
+table.data.2 %>%
+  kbl() %>%
+  kable_styling(full_width = F)
+```
+
+The computed R2adj in our first model is 0.4007. The result from the table and a more closer examination of the models we created in the for loop indicate that removal of these points is indeed useful. 
+
+(i) Assess the assumptions of the model from item (f) by looking at the residual plots,the fitted-versus-residuals plot, and the QQ-plot. Discuss what you see.
+```{r}
+fort.2 %>%
+  dplyr::select(.resid, rn) %>%
+  gather(residual, value, -rn) %>%
+  mutate(residual = factor(residual, 
+                           levels = '.resid')) %>%
+  ggplot(aes(x = rn, y = value)) + 
+  geom_point(size = 1) +
+  geom_hline(yintercept = 0, lty = 2, col = 'red') +
+  geom_hline(yintercept = 2750, lty = 2, col = 'red') +
+  geom_hline(yintercept = -2750, lty = 2, col = 'red') +
+  geom_text(aes(label = ifelse(abs(value) >2750, rn, '')), vjust = -0.5) +
+  xlab("Index") + 
+  ylab("Residuals") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) + 
+  ggtitle("Index plot of residuals") +
+  theme(plot.title = element_text(hjust = 0.5, size = 15))
+```
+
+There seems to be a raised trend in our residuals.  
+
+```{r}
+tibble(fort.2$.stdresid) %>%
+  gather(type, val) %>%
+  ggplot(aes(sample = val)) +
+  stat_qq(size = 1) +
+  geom_abline(slope = 1, intercept = 0, lty = 2, col = 'blue') +
+  xlab("Theoretical value") + 
+  ylab("Sample value") +
+  ggtitle("QQ-plot of the residuals") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 15))
+```
+
+We see evidence of non-normality. This is the effect of some points on this model. 
+
+```{r}
+tibble(yFitted = fort.2$.fitted, residual = fort.2$.resid, rn = fort.2$rn) %>%
+  ggplot(aes(x = yFitted, y = residual)) + 
+  geom_point(size = 1) + 
+  geom_hline(yintercept = 0, lty = 2, col = 'red') +
+  geom_smooth(method = 'loess') +
+  xlab("Fitted value") +
+  ylab("Residual") +
+  ggtitle("Residual vs. fitted value") +
+  theme(plot.title = element_text(hjust = 0.5, size = 15))
+```
+
+
+
+
+
+(j)Based on the results from items (g), (h) and (i) suggest improvements to the model.
+
+the variable seasonwinter is not significant we have to consider the model that not consider 
+season winter as a variables. this could help to improve the model. 
+
+
+To summarize our findings. There are some deviations from the normal assumptions, there seems to be heteroskedasticity, there are some some points  seems to be outliers and influential points. We can potentially improve our model by applying transformations.
+
+
+
+# Multiple linear regression continued
+We continue with the bikesharing.csv data and the model you fitted in the previous section.
+
+(a) What power transform does the boxcox() function suggest could improve the model from the previous section? That is, which value of $\lambda$ maximizes the log-likelihood?
+
+```{r}
+fit2=lm(registered~season+temp+hum+windspeed, data = bikesharing)
+bc<-boxcox(fit2)
+lambda <- bc$x[which.max(bc$y)]
+lambda
+```
+
+
+b) Add the log transform of registered and the Box-Cox transform of registered to your bikehsaring data set. Plot the density of the number registered bikers as well as its log transformation and boxcox() transformation. Discuss what you see.
+
+
+```{r}
+bikesharing$log_registered<-log(bikesharing$registered)
+bikesharing$T_lambda_registered<-((bikesharing$registered)^(lambda)-1)/lambda
+
+plot(density(bikesharing$registered))
+plot(density(bikesharing$log_registered))
+plot(density(bikesharing$T_lambda_registered))
+```
+
+It seams that Transformation with boxcox and without transformation is better than log transformation. 
+
+
+(c) Fit a new model where registered has been replaced with its log transform. You should include the variables temp, hum, wind speed as independent variables. You should also add new variables to the model from the data set. For each variable you choose not to include, explain why you are omitting that variable. For each variable you choose to include, explain why you are including that variable. You can include interaction effects.
+
+I add workingday, holiday, variable casual. Others are similar or has small variation. 
+```{r}
+fitlog=lm(log_registered~season+temp+hum+windspeed+workingday+holiday+casual, data = bikesharing)
+Sl=summary(fitlog)
+Sl
+```
+
+(d) State the estimates for the parameters as well as $\sigma$ for your new model. State which of the predictors are significant at $\alpha$= 0.05.
+
+```{r}
+Sl$sigma
+Sl$adj.r.squared
+Sl$r.squared
+```
+All the variables except holiday and seasonwinter all variables are significant. 
+
+
+(e) Add the number of parameters, R2adj, AIC, and RMSE (on the relevant scale) of the model you created in (c) to the table you created in part II (g). Display the full table and discuss what you see; is your new model an improvement?
+
+```{r}
+models <- c(1,2,3)
+R.adj <- rep(0,3)
+aic <- rep(0,3)
+RMSE<- rep(0,3)
+R.adj[1]=S1$adj.r.squared
+R.adj[2]=Sfit2$adj.r.squared
+R.adj[3]=Sl$adj.r.squared
+aic[1]=AIC(fitseas)
+aic[2]=AIC(fit2)
+aic[3]=AIC(fitlog)
+RMSE[1]=sqrt(mean((bikesharing$registered - predict(fitseas))^2))
+RMSE[2]=sqrt(mean((bikesharing$registered - predict(fit2))^2))
+RMSE[3]=sqrt(mean((bikesharing$registered - exp(predict(fitlog)))^2))
+N.predictors=rep(0,3)
+N.predictors[1]=length(fitseas$coefficients)
+N.predictors[2]=length(fit2$coefficients)
+N.predictors[3]=length(fitlog$coefficients)
+table.data.3 <- as.data.frame(cbind(models,N.predictors ,R.adj, aic, RMSE))
+colnames(table.data.3) <- c('Model','Nub.var' ,'$R_{\\text{adj}}^2$', 'AIC', '$\\text{RMSE}$')
+
+table.data.3 %>%
+  kbl() %>%
+  kable_styling(full_width = F)
+```
+
+AIC and RMSE of model 3 is very smaller than others. Model 3 is better than one and two. 
+
+(f) Check for high-leverage points, outliers and influential points for the model from(c) Display and discuss the main diagnostics plots for high-leverage points, outliers and influential points. Perform a statistics test for potential outliers and discuss the results.
+
+```{r}
+fort.3 <- fortify(fitlog)
+fort.3$.jackknife <- rstudent(fitlog)
+fort.3$rn <- row.names(fort.3)
+```
+
+```{r}
+fort.3 %>%
+  dplyr::select(.stdresid, .jackknife, rn) %>%
+  gather(residual, value, -rn) %>%
+  mutate(residual = factor(residual, 
+                           levels = c('.stdresid', '.jackknife'))) %>%
+  ggplot(aes(x = rn, y = value)) + 
+  geom_point(size = 1) +
+  geom_hline(yintercept = 0, lty = 2, col = 'red') +
+  geom_hline(yintercept = 3, lty = 2, col = 'red') +
+  geom_hline(yintercept = -3, lty = 2, col = 'red') +
+  geom_text(aes(label = ifelse(abs(value) > 3, rn, '')), vjust = -0.5) +
+  xlab("Index") +
+  ylab("Residuals") +
+  ggtitle("Index plot of standardized and jackknife residuals") +
+  theme(plot.title = element_text(hjust = 0.5, size = 15)) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) + 
+  facet_wrap(~residual, scales = 'free')
+```
+
+```{r}
+p = length(coef(fitlog))
+n = length(fitted(fitlog))
+alpha <- 0.05
+tCrit <- qt(p = 1 - alpha/(2 * n), n - p - 1)
+tNoBon <- qt(p = 1 - alpha/2, n - p - 1)
+tab <- tibble(jackknife = abs(fort.3$.jackknife[abs(fort.3$.jackknife) > 3]),
+       tCrit = tCrit,
+       OutlierBon = jackknife > tCrit,
+       tNoBon = tNoBon,
+       OutlierNoBon = jackknife > tNoBon)  %>%
+  kbl(align = 'c') %>%
+  kable_styling(full_width = F)
+tab
+```
+```{r}
+theoreticalT <- qt(p = 1 - 0.05/(2 * n), df = n - p - 1)
+fort.3$obsN <- row.names(fort.3)
+fort.3 %>%
+  mutate(theoretical = theoreticalT,
+         rejectNull = abs(.jackknife) > theoretical) %>%
+  filter(rejectNull == T) %>%
+  select(obsN, .jackknife, theoretical, rejectNull) %>%
+  kbl(align = 'c') %>%
+  kable_styling()
+```
+
+This shows that points 27, 69 and 668 are outliears. 
+
+```{r}
+fort.3 %>%
+  ggplot(aes(x = rn, y = .hat)) +
+  geom_point(size = 1) +
+  geom_hline(yintercept = (2*p)/n, lty = 2, col = 'red') +
+  geom_text(aes(label = ifelse(.hat > 2*p/n, rn, '')), hjust = -0.5) +
+  xlab("Index") +
+  ylab("Leverages") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  ggtitle("Index plot of leverages") +
+  theme(plot.title = element_text(hjust = 0.5, size = 15))
+```
+
+```{r}
+
+suspicious <- c(27,50,69,668,150,105,204,17,185,315,248,283,381,367,360,416, 463, 472,52,514,551,52,612,647,682,725,692 ,293,694,627)
+fort.3 %>%
+  filter(obsN %in% suspicious) %>%
+  mutate(highLeverage = .hat > 2*p/n,
+         outlier = abs(.jackknife) > theoreticalT,
+         influential = .cooksd > 0.05) %>%
+  select(obsN, highLeverage, outlier, influential) %>%
+  mutate(totalMarks = highLeverage + outlier + influential) %>%
+  kbl(align = 'c') %>%
+  kable_styling()
+```
+
+
+
+ We can see that 27, 688 and 69 are outliear and influential. 
+
+
+
+(g) Assess the assumptions of the model from (c) by looking at the residual plots, the fitted-versus-residuals plot, and the QQ-plot. Discuss what you see.
+
+
+```{r}
+fort.3 %>%
+  dplyr::select(.resid, rn) %>%
+  gather(residual, value, -rn) %>%
+  mutate(residual = factor(residual, 
+                           levels = '.resid')) %>%
+  ggplot(aes(x = rn, y = value)) + 
+  geom_point(size = 1) +
+  geom_hline(yintercept = 0, lty = 2, col = 'red') +
+  geom_hline(yintercept = 2, lty = 2, col = 'red') +
+  geom_hline(yintercept = -2, lty = 2, col = 'red') +
+  geom_text(aes(label = ifelse(abs(value) >2, rn, '')), vjust = -0.5) +
+  xlab("Index") + 
+  ylab("Residuals") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) + 
+  ggtitle("Index plot of residuals") +
+  theme(plot.title = element_text(hjust = 0.5, size = 15))
+```
+
+
+
+```{r}
+tibble(fort.3$.stdresid) %>%
+  gather(type, val) %>%
+  ggplot(aes(sample = val)) +
+  stat_qq(size = 1) +
+  geom_abline(slope = 1, intercept = 0, lty = 2, col = 'blue') +
+  xlab("Theoretical value") + 
+  ylab("Sample value") +
+  ggtitle("QQ-plot of the residuals") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 15))
+```
+
+It is clear that there are some points which are not normal. However, it seams that residuals are not normally distributed and in the residual-index plot dots are not equally distribute. 
+
+(h) Plot the partial regression plot for each predictor you treat as a continuous variablein your modeling. Discuss what you see.
+
+```{r} 
+car::avPlots(fitlog, id.n=2, id.cex=0.7)
+```
+easily we can see that points 69 and 688 are outliear of the each plot.
+
+(i) Based on the results from items (e), (f), (g), and (h) suggest improvements to themodel. 
+
+
+
+we can remove the outliers (Not at the same time ) one by one  to fit the model to find better fit.
+
+Any way I would like to do see the model with boxcox transformation.
+
+```{r}
+fit.bc=lm(T_lambda_registered~season+temp+hum+windspeed+workingday+holiday, data = bikesharing)
+
+```
+
+```{r}
+fort.4 <- fortify(fit.bc)
+fort.4$.jackknife <- rstudent(fit.bc)
+fort.4$rn <- row.names(fort.4)
+```
+
+```{r}
+fort.4 %>%
+  dplyr::select(.resid, rn) %>%
+  gather(residual, value, -rn) %>%
+  mutate(residual = factor(residual, 
+                           levels = '.resid')) %>%
+  ggplot(aes(x = rn, y = value)) + 
+  geom_point(size = 1) +
+  geom_hline(yintercept = 0, lty = 2, col = 'red') +
+  geom_hline(yintercept = 250, lty = 2, col = 'red') +
+  geom_hline(yintercept = -250, lty = 2, col = 'red') +
+  geom_text(aes(label = ifelse(abs(value) >250, rn, '')), vjust = -0.5) +
+  xlab("Index") + 
+  ylab("Residuals") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) + 
+  ggtitle("Index plot of residuals") +
+  theme(plot.title = element_text(hjust = 0.5, size = 15))
+```
+```{r}
+tibble(fort.4$.stdresid) %>%
+  gather(type, val) %>%
+  ggplot(aes(sample = val)) +
+  stat_qq(size = 1) +
+  geom_abline(slope = 1, intercept = 0, lty = 2, col = 'blue') +
+  xlab("Theoretical value") + 
+  ylab("Sample value") +
+  ggtitle("QQ-plot of the residuals") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 15))
+```
+
+# Logistic regression
+
+
+For this problem we will use theGusto.txt data. The data consists of 2188 observations and 26 columns. The variable of interest is DAY30 which represents the 30-day survival of patients who suffered myocardial infarction (heart attack). If DAY30 = 0, the patient survived and if DAY30 = 1 the patient died. We are interested in determining which risk factors are associated with the survival.
+
+We are going to limit our analysis to the following variables:AGE: age (years);SEX: 0 = male; 1 = female; DIA: 0 = no diabetes; 1 = diabetes; HTN: 0 =no hypertension; 1 = hypertension; SMK: 1 = current smoker; 2 = formersmoker; 3 = never smoked; PMI: 0 = no previous myocardial infarction; 1 =previous myocardial infarction, HEI: height (cm); WEI: weight (kg).
+
+
+(a) Load the data into R and reduce it so it only has the variables listed above. Recast variable SMK as a factor variable with baseline1 = current smoker. Replace the variables HEI and WEI with the variable BMI defined as weight(kg)/height(m)2. Per-form an exploratory analysis on the data by determining the number of observations for each level of DAY30 and by computing the mean, standard deviation, 25% and 75% quantiles for each continuous variable stratified by the levels of DAY30. Present your results in a table and discuss the table.
+
+```{r}
+library(readr)
+GustoW <- read_table2("/Users/farhadzare/Desktop/Applied linear reg/GustoW.txt")
+GustoW<-GustoW[,c(1,2,3,7,11,12,13,14,15)]
+GustoW$SMK=factor(GustoW$SMK, labels = c('current','former','never'))
+is.factor(GustoW$SMK)
+
+GustoW$BMI=GustoW$WEI/(GustoW$HEI^2)
+
+drop <- c("HEI","WEI")
+GustoW_update = GustoW[,!(names(GustoW) %in% drop)]
+
+GustoW_update[,-7] %>%
+  gather(variable, value, -DAY30) %>%
+  group_by(DAY30, variable) %>%
+  summarize(n = n(),
+            mean = mean(value),
+            sd = sd(value),
+            min = min(value),
+            q25 = quantile(value, 0.25),
+            median = median(value),
+            q75 = quantile(value, 0.75),
+            max = max(value)) %>%
+  arrange(variable, DAY30) %>%
+  kbl(align = 'c', booktabs = T) %>%
+  kable_styling(full_width = F)
+
+```
+(b) Fit a logistic regression model to the data which includes all the variables as predictors (be careful! We have replaced and removed some variables). State the estimates for the parameters. Plot the ROC curve of the model. What do the x and y axis on the ROC curve plot represent? Compute the AUC of the ROC curve, and compute the Brier score of the model where the Brier score is defined as:$$B:=\frac{1}{n}\sum_{i=1}^n(yi−\hat{\pi}_i)2$$,where $\hat{\pi}_i$ are the predicted probabilities of the model.
+
+```{r}
+GustoW_update %>%
+  group_by(DAY30, SMK) %>%
+  count() %>%
+  ggplot(aes(x = SMK, y = n, fill = factor(DAY30))) +
+  geom_bar(stat = 'identity', position = 'dodge') +
+  scale_fill_brewer(type = 'seq', palette = 'Set1') +
+  theme(legend.position = 'bottom')
+```
+```{r}
+glm1 <- glm( DAY30~ ., data = GustoW_update, family = binomial)
+glm1S=summary(glm1)
+glm1S
+```
+
+```{r}
+library(pROC)
+Roc0=roc(GustoW_update$DAY30, predict(glm1))
+
+plot(Roc0,print.auc=TRUE)
+
+
+AUC=auc(roc(GustoW_update$DAY30, predict(glm1)))
+AUC
+
+BRIER=mean((GustoW_update$DAY30 - predict(glm1, type = 'response'))^2)
+BRIER
+```
+
+y-axes shows true positive rate 
+x-axes shows false positive rate. 
+
+(c) Use the method of backward selection to eliminate predictors until all coefficient p-values are less than or equal to $\alpha'$= 0.2. Keep track of the AIC, AUC, and Brier score of the model for each iteration of the elimination process, as well as which predictor was eliminated. Present the results in a table with columns Iteration,Predictor eliminated, AIC, AUC, Brier. The 0-th iteration is the model from(b) and it should be included in the table (predictor elimanted cell is empty here).Once you have reached the stopping criteria, state the estimates of the model on the log-odds scale along with their p-values and plot the ROC curve of the model.
+
+
+
+```{r}
+glm1S$coefficients[glm1S$coefficients[,4]>.2,]
+
+
+AICData <- data.frame(Iteration = 1:4,predictors_Eliminate=0,
+                      AIC = 0, AUC=0, Brier=0) 
+
+
+AICData[1, 2]<-'NA'
+AICData[1, 3] <- AIC(glm1)
+AICData[1, 4] <- auc(roc(GustoW_update$DAY30, predict(glm1)))
+AICData[1, 5] <- mean((GustoW_update$DAY30 - predict(glm1, type = 'response'))^2)
+
+
+lmTmp <- update(glm1 ,.~.-SMK )
+lmTmpS=summary(lmTmp)
+AICData[2, 2]<-'SMK'
+AICData[2, 3] <- AIC(lmTmp)
+AICData[2, 4] <- auc(roc(GustoW_update$DAY30, predict(lmTmp)))
+AICData[2, 5] <- mean((GustoW_update$DAY30 - predict(lmTmp, type = 'response'))^2)
+
+lmTmp <- update(glm1 ,.~.-HTN-SMK)
+lmTmpS=summary(lmTmp)
+AICData[3, 2]<-'HTN+SMK'
+AICData[3, 3] <- AIC(lmTmp)
+AICData[3, 4] <- auc(roc(GustoW_update$DAY30, predict(lmTmp)))
+AICData[3, 5] <- mean((GustoW_update$DAY30 - predict(lmTmp, type = 'response'))^2)
+
+lmTmp <- update(glm1 ,.~.-HTN-DIA-SMK)
+lmTmpS=summary(lmTmp)
+AICData[4, 2]<-'HTN+SMK+DIA'
+AICData[4, 3] <- AIC(lmTmp)
+AICData[4, 4] <- auc(roc(GustoW_update$DAY30, predict(lmTmp)))
+AICData[4, 5] <- mean((GustoW_update$DAY30 - predict(lmTmp, type = 'response'))^2)
+
+
+```
+
+```{r}
+AICData %>%
+  kbl(align = 'c') %>%
+  kable_styling()
+```
+
+
+Checking :
+
+```{r}
+library (leaps)
+back=step(glm1) 
+
+```
+
+```{r}
+stepWiseLM <- stepAIC(object = glm1, direction = 'backward', trace = F)
+summary(stepWiseLM)
+
+```
+
+```{r}
+Roc1=roc(GustoW_update$DAY30, predict(stepWiseLM ))
+plot(Roc1,print.auc=TRUE)
+```
+
+
+(e) Plot the deviance residuals, the deviance residuals versus the fitted values, and the deviance residuals versus all predictors (one graph for each predictor). Plot the QQplot of the deviance residuals. Are the deviance residuals normally distributed?
+
+```{r}
+fort.final <- fortify(stepWiseLM)
+fort.final$.jackknife <- rstudent(stepWiseLM)
+fort.final$rn <- row.names(fort.final)
+```
+
+
+```{r}
+stepWiseLMS=summary(stepWiseLM)
+devRes <- stepWiseLMS$deviance.resid
+data.frame(y = GustoW_update$DAY30,
+           index = 1:nrow(GustoW_update),
+           deviance = devRes) %>%
+  ggplot(aes(x = index, y = deviance, col = y)) +
+  geom_point() +
+  geom_hline(yintercept = -3, lty = 2, col = 'red') +
+  geom_hline(yintercept = 3, lty = 2, col = 'red') +
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_text(aes(label = ifelse(abs(deviance) > 3, index, '')), vjust = -0.5)
+```
+
+
+```{r}
+GustoW_update %>%
+  mutate(deviance = devRes,
+         index = row_number()) %>%
+  gather(variable, value, -deviance, -DAY30, -index) %>%
+  ggplot(aes(x  = value, y =  deviance, color = DAY30)) +
+  geom_point() +
+  facet_wrap(~variable, scales = 'free') +
+  geom_hline(yintercept = -2, lty = 2, col = 'red') +
+  geom_hline(yintercept = 2, lty = 2, col = 'red') +
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_text(aes(label = ifelse(abs(deviance) > 2, index, '')), vjust = -0.5) +
+  stat_smooth(method="loess",se=F)
+```
+
+
+```{r}
+data.frame(index = 1:nrow(GustoW_update),
+           y = GustoW_update$DAY30,
+           predict = stepWiseLM$fitted.values, # can also use predict with type = response
+           deviance = devRes) %>% 
+  ggplot(aes(x = predict, y = deviance, color = y)) +
+  geom_point() +
+  geom_hline(yintercept = -2, lty = 2, col = 'red') +
+  geom_hline(yintercept = 2, lty = 2, col = 'red') +
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_text(aes(label = ifelse(abs(deviance) > 2.5, index, '')), vjust = -0.5) +
+  stat_smooth(method="loess", se = F) # I choose 2.5 to remove number above some points
+```
+
+```{r}
+qqnorm(devRes)
+```
+(f) Determine the predicted probability of an individual with the following predictor values:AGE = 67; SEX = 0; DIA = 0; HTN = 0; SMK = 3; PMI = 1; HEI =187; WEI = 115. Compute the 95% confidence interval of the predicted probability for this individual.  State the predicted probability and the confidence interval.
+
+```{r}
+stepWiseLM$coefficients
+x0 <- c(1,0,67,1,115/(187^2))
+S <- vcov(stepWiseLM)
+S
+
+eta <- t(x0) %*% coef(stepWiseLM)
+se <- qnorm(0.975) * sqrt(t(x0) %*% S %*% x0)
+eta
+c(eta - se, eta + se)
+
+# probability scale
+exp(eta)/(1 + exp(eta))
+# The 95% confidence interval is as follows:
+exp(c(eta - se, eta + se))/(1 + exp(c(eta - se, eta + se)))
+```
+
+
+
+
+
